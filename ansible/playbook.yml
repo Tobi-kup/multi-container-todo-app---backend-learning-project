@@ -1,0 +1,94 @@
+---
+- name: Todo-API Server einrichten
+  hosts: app
+  become: true
+  vars:
+    app_dir: /opt/todo-api
+    image_tag: latest
+
+  tasks:
+    - name: Voraussetzung prüfen
+      ansible.builtin.assert:
+        that: dockerhub_username is defined
+        fail_msg: "Bitte -e dockerhub_username=DEINNAME angeben"
+
+    - name: Hilfspakete installieren
+      ansible.builtin.apt:
+        name: [ca-certificates, curl, gnupg]
+        state: present
+        update_cache: true
+
+    - name: Ordner für Schlüssel anlegen
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Docker-Schlüssel laden
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+
+    - name: Docker-Paketquelle hinzufügen
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        filename: docker
+        state: present
+
+    - name: Docker und Compose installieren
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Docker starten und beim Systemstart aktivieren
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: App-Ordner anlegen
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Compose-Datei kopieren
+      ansible.builtin.copy:
+        src: ../docker-compose.prod.yml
+        dest: "{{ app_dir }}/docker-compose.prod.yml"
+        mode: "0644"
+
+    - name: .env-Datei schreiben
+      ansible.builtin.copy:
+        dest: "{{ app_dir }}/.env"
+        mode: "0600"
+        content: |
+          DOCKERHUB_USERNAME={{ dockerhub_username }}
+          IMAGE_TAG={{ image_tag }}
+
+    - name: Images ziehen
+      ansible.builtin.command:
+        cmd: docker compose -f docker-compose.prod.yml pull
+        chdir: "{{ app_dir }}"
+      changed_when: true
+
+    - name: Container starten
+      ansible.builtin.command:
+        cmd: docker compose -f docker-compose.prod.yml up -d
+        chdir: "{{ app_dir }}"
+      changed_when: true
+
+    - name: Warten, bis die API antwortet
+      ansible.builtin.uri:
+        url: http://localhost:3000/health
+        status_code: 200
+      register: health
+      retries: 12
+      delay: 5
+      until: health.status == 200
