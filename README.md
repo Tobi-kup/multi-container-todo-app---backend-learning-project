@@ -1,219 +1,92 @@
 # Multi-Container Todo-App
 
-Eine einfache Todo-API (Node.js, Express, MongoDB), die mit Docker Compose betrieben wird. Das Projekt ist ein Lernprojekt: Es zeigt den Weg von der lokalen Entwicklung bis zur automatischen Auslieferung mit einer CI/CD-Pipeline.
+Ein Lernprojekt: eine kleine Todo-API (Node.js, Express, MongoDB), mit der ich Docker Compose, Server-Einrichtung mit Ansible und Terraform sowie eine CI/CD-Pipeline mit GitHub Actions ausprobiert habe. Die App selbst ist bewusst simpel gehalten, im Mittelpunkt stehen der Betrieb und die Automatisierung.
 
-## Inhalt
+## Was das Projekt macht
 
-- [Überblick](#überblick)
-- [Projektstruktur](#projektstruktur)
-- [API](#api)
-- [Lokal entwickeln](#lokal-entwickeln)
-- [Produktion](#produktion)
-- [Server einrichten (Ansible)](#server-einrichten-ansible)
-- [Terraform](#terraform)
-- [CI/CD-Pipeline](#cicd-pipeline)
+Die API verwaltet Todos (anlegen, lesen, ändern, löschen) und speichert sie in MongoDB. API und Datenbank laufen als zwei Container und werden mit Docker Compose gestartet. Bei jedem Push auf `main` baut GitHub Actions ein neues Image, lädt es zu Docker Hub und aktualisiert die laufenden Container automatisch.
 
-## Überblick
-
-| Baustein | Aufgabe |
-|---|---|
-| **Express** | REST-API für Todos |
-| **Mongoose / MongoDB** | speichert die Todos |
-| **Docker / Docker Compose** | startet API und Datenbank als Container |
-| **Docker Hub** | Ablage des fertigen Produktions-Images |
-| **Ansible** | richtet den Server ein (Docker, Compose, Start der Container) |
-| **Terraform** | beschreibt einen Cloud-Server (DigitalOcean) |
-| **GitHub Actions** | baut, lädt hoch und deployt bei jedem Push auf `main` |
-
-Ablauf der Auslieferung:
-
-```
-git push  ->  GitHub Actions baut das Image  ->  Docker Hub
-                                                    |
-                  Self-hosted Runner (Server)  <----+
-                  docker compose pull && up -d
-```
-
-## Projektstruktur
-
-```
-.
-├── src/
-│   ├── index.js            # Einstiegspunkt: Express-App, Mongo-Verbindung
-│   ├── models/todo.js      # Mongoose-Schema für Todos
-│   └── routes/todos.js     # Routen für /todos
-├── ansible/
-│   ├── inventory.ini       # Zielrechner (localhost)
-│   └── playbook.yml        # richtet den Server ein
-├── terraform/              # DigitalOcean-Server (optional)
-├── .github/workflows/
-│   └── deploy.yml          # CI/CD-Pipeline
-├── Dockerfile              # zwei Stages: development und production
-├── docker-compose.yml      # lokale Entwicklung
-├── docker-compose.prod.yml # Produktion (Image von Docker Hub)
-└── package.json
-```
-
-## API
-
-Die API hat keine Authentifizierung. Ein Todo hat diese Felder:
-
-| Feld | Typ | Hinweis |
+| Methode | Pfad | Beschreibung |
 |---|---|---|
-| `title` | String | Pflichtfeld |
-| `description` | String | optional, Standard: leer |
-| `completed` | Boolean | Standard: `false` |
-| `_id`, `createdAt`, `updatedAt` | | werden automatisch gesetzt |
+| `GET` | `/todos` | alle Todos |
+| `POST` | `/todos` | Todo anlegen |
+| `GET` | `/todos/:id` | ein Todo abrufen |
+| `PUT` | `/todos/:id` | Todo ändern |
+| `DELETE` | `/todos/:id` | Todo löschen |
+| `GET` | `/health` | Health-Check für die Pipeline |
 
-| Methode | Pfad | Beschreibung | Erfolgscode |
-|---|---|---|---|
-| `GET` | `/todos` | alle Todos, neueste zuerst | 200 |
-| `POST` | `/todos` | Todo anlegen | 201 |
-| `GET` | `/todos/:id` | ein Todo abrufen | 200 |
-| `PUT` | `/todos/:id` | Todo ändern | 200 |
-| `DELETE` | `/todos/:id` | Todo löschen | 204 |
-| `GET` | `/health` | Health-Check (für die Pipeline) | 200 |
+Es gibt bewusst keine Authentifizierung.
 
-Fehlerfälle: `400` bei ungültigen Daten oder einer ungültigen ID, `404` wenn das Todo nicht existiert.
+## Aufbau
 
-### Beispiele (PowerShell)
+```
+src/                      API (Express, Mongoose)
+Dockerfile                zwei Stages: development und production
+docker-compose.yml        lokale Entwicklung (nodemon, Bind Mount)
+docker-compose.prod.yml   Betrieb mit dem fertigen Image von Docker Hub
+ansible/                  richtet den Server ein
+terraform/                Beschreibung eines DigitalOcean-Servers
+.github/workflows/        CI/CD-Pipeline
+```
 
+```
+git push -> GitHub Actions baut das Image -> Docker Hub
+                                                |
+              Self-hosted Runner (mein Server) <-+
+              docker compose pull && up -d
+```
+
+## Entscheidungen
+
+- **Zwei Compose-Dateien:** Lokal baue ich das Image selbst und binde `./src` ein, damit nodemon bei Änderungen neu startet. Im Betrieb kommt das fertige Image aus Docker Hub, ohne Bind Mount und ohne nodemon.
+- **Zwei Stages im Dockerfile:** Das Produktions-Image enthält keine Entwicklungspakete und ist dadurch kleiner.
+- **Datenbank nicht nach außen veröffentlicht:** Im Betrieb erreicht nur die API den Mongo-Container, weil die Datenbank keine Anmeldung hat.
+- **Named Volume für Mongo:** Die Daten überleben `docker compose down`. Nur `down -v` löscht sie.
+- **Lokaler Server statt Cloud:** Um keine Kosten zu verursachen, ist der "Server" ein Ubuntu in WSL2. Ansible richtet es genauso ein wie einen echten Server.
+- **Self-hosted Runner:** Er läuft auf meinem Rechner und holt Deploy-Aufträge bei GitHub ab, deshalb braucht der Rechner keine öffentliche IP.
+
+## Lokal starten
+
+```bash
+docker compose up --build
+```
+
+Die API läuft dann auf <http://localhost:3000>. Daten bleiben bei `docker compose down` erhalten.
+
+## Stand und Grenzen
+
+- **Terraform** ist geschrieben und mit `terraform validate` geprüft, aber nie mit `apply` angewendet, weil ein Cloud-Server Geld kostet.
+- Die Pipeline funktioniert nur, solange der Runner auf meinem Rechner läuft.
+- Es gibt keine automatisierten Tests, die Pipeline prüft nur über `/health`, ob die API nach dem Deployment antwortet.
+
+### Beispiele der Nutzung der Todo-App (PowerShell)
+ 
 ```powershell
 # Anlegen
 $todo = Invoke-RestMethod -Method Post -Uri http://localhost:3000/todos `
   -ContentType "application/json" `
   -Body (@{ title = "Milch kaufen" } | ConvertTo-Json)
-
+ 
 # Alle anzeigen
 Invoke-RestMethod http://localhost:3000/todos
-
+ 
 # Eines abrufen
 Invoke-RestMethod http://localhost:3000/todos/$($todo._id)
-
+ 
 # Als erledigt markieren
 Invoke-RestMethod -Method Put -Uri http://localhost:3000/todos/$($todo._id) `
   -ContentType "application/json" `
   -Body (@{ completed = $true } | ConvertTo-Json)
-
+ 
 # Löschen
 Invoke-RestMethod -Method Delete -Uri http://localhost:3000/todos/$($todo._id)
 ```
-
+ 
 ### Beispiele (curl, Linux/macOS)
-
+ 
 ```bash
 curl -X POST http://localhost:3000/todos \
   -H "Content-Type: application/json" \
   -d '{"title":"Milch kaufen"}'
 curl http://localhost:3000/todos
 ```
-
-## Lokal entwickeln
-
-Voraussetzung: Docker Desktop.
-
-```bash
-docker compose up --build
-```
-
-- Die API läuft auf <http://localhost:3000>.
-- `./src` ist per Bind Mount im Container eingebunden, `nodemon` startet die API bei Änderungen neu (mit `-L`, damit das unter Windows funktioniert).
-- Die Daten liegen im Volume `mongo_data` und bleiben bei `docker compose down` erhalten.
-
-```bash
-docker compose down        # stoppen, Daten bleiben
-docker compose down -v     # stoppen und Daten löschen
-docker compose logs -f api # Ausgaben der API
-```
-
-## Produktion
-
-`docker-compose.prod.yml` nutzt das fertige Image von Docker Hub statt es zu bauen. Es gibt keinen Bind Mount und kein nodemon. Die Datenbank ist nicht nach außen veröffentlicht, nur die API erreicht sie.
-
-Image von Hand bauen und hochladen:
-
-```bash
-docker build --target production -t DEINNAME/todo-api:latest .
-docker login
-docker push DEINNAME/todo-api:latest
-```
-
-Produktions-Stack lokal testen:
-
-```powershell
-$env:DOCKERHUB_USERNAME = "DEINNAME"
-docker compose -f docker-compose.prod.yml up -d
-```
-
-## Server einrichten (Ansible)
-
-Das Playbook installiert Docker und das Compose-Plugin, legt `/opt/todo-api` an, schreibt die `.env`-Datei, zieht das Image und startet die Container. Es lässt sich beliebig oft ausführen (idempotent).
-
-Ansible läuft unter Windows nicht direkt, deshalb wird WSL2 mit Ubuntu 24.04 genutzt (mit aktiviertem systemd). Der Server ist in dieser Variante das Ubuntu selbst.
-
-```bash
-sudo apt install -y ansible
-cd "/mnt/d/Projekte/Multi-Container Todo List App/ansible"
-ansible-playbook -i inventory.ini playbook.yml -K -e dockerhub_username=DEINNAME
-```
-
-- `-K` fragt nach dem `sudo`-Passwort.
-- Für einen echten Server trägt man dessen IP und SSH-Zugang im Inventory ein.
-
-Prüfen:
-
-```bash
-docker ps
-curl http://localhost:3000/health
-```
-
-## Terraform
-
-Im Ordner `terraform/` steht die Beschreibung eines DigitalOcean-Servers (Droplet, SSH-Schlüssel, Firewall). In diesem Projekt wurde sie nur geprüft und nicht angewendet, weil ein Cloud-Server Kosten verursacht.
-
-```bash
-cd terraform
-terraform init
-terraform validate
-```
-
-Ein Server entsteht erst mit `terraform apply`, wofür ein DigitalOcean-API-Token in `terraform.tfvars` nötig ist (Datei steht in der `.gitignore` und darf nie eingecheckt werden). Danach `terraform destroy`, um Kosten zu vermeiden.
-
-## CI/CD-Pipeline
-
-Die Datei `.github/workflows/deploy.yml` läuft bei jedem Push auf `main` und besteht aus zwei Jobs:
-
-1. **build** (GitHub-Runner): baut das Image mit `target: production` und lädt es zu Docker Hub, getaggt mit `latest` und der Commit-Prüfsumme.
-2. **deploy** (Self-hosted Runner): setzt `IMAGE_TAG` in `/opt/todo-api/.env`, führt `docker compose pull` und `up -d` aus und prüft `/health`.
-
-### Einmalige Einrichtung
-
-**Secrets** (GitHub: *Settings → Secrets and variables → Actions*):
-
-| Name | Wert |
-|---|---|
-| `DOCKERHUB_USERNAME` | Docker-Hub-Benutzername (klein geschrieben) |
-| `DOCKERHUB_TOKEN` | Docker-Hub-Access-Token mit *Read & Write* |
-
-**Self-hosted Runner** (GitHub: *Settings → Actions → Runners → New self-hosted runner*, Linux x64): die dort angezeigten Befehle im Ubuntu ausführen. Der Runner-Benutzer braucht Zugriff auf Docker und den App-Ordner:
-
-```bash
-sudo usermod -aG docker $USER
-sudo chown -R $USER /opt/todo-api
-```
-
-Danach WSL neu starten (`wsl --shutdown` in PowerShell) und den Runner starten:
-
-```bash
-cd ~/actions-runner
-./run.sh
-```
-
-Optional als Dienst, damit er im Hintergrund läuft:
-
-```bash
-sudo ./svc.sh install
-sudo ./svc.sh start
-```
-
-Ist der Runner nicht aktiv, bleibt der Job `deploy` bei "Waiting for a runner" stehen.
