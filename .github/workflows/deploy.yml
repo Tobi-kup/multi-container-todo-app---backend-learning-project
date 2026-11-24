@@ -1,0 +1,59 @@
+name: Build und Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Code holen
+        uses: actions/checkout@v4
+
+      - name: Docker Buildx einrichten
+        uses: docker/setup-buildx-action@v3
+
+      - name: Bei Docker Hub anmelden
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Image bauen und hochladen
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: production
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/todo-api:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/todo-api:${{ github.sha }}
+
+  deploy:
+    needs: build
+    runs-on: self-hosted
+    steps:
+      - name: Code holen
+        uses: actions/checkout@v4
+
+      - name: Compose-Datei bereitstellen
+        run: cp docker-compose.prod.yml /opt/todo-api/docker-compose.prod.yml
+
+      - name: Neue Version starten
+        working-directory: /opt/todo-api
+        run: |
+          sed -i '/^IMAGE_TAG=/d' .env
+          echo "IMAGE_TAG=${{ github.sha }}" >> .env
+          docker compose -f docker-compose.prod.yml pull
+          docker compose -f docker-compose.prod.yml up -d --remove-orphans
+          docker image prune -f
+
+      - name: Health-Check
+        run: |
+          for i in $(seq 1 12); do
+            if curl -fsS http://localhost:3000/health; then exit 0; fi
+            sleep 5
+          done
+          echo "API antwortet nicht"
+          exit 1
