@@ -18,6 +18,7 @@ router.get('/', async (req, res) => {
         const todos = await Todo.find().sort({ createdAt: -1 });
         res.json(todos);
     } catch (err) {
+        console.error(err);
         res.status(500).json({ error: 'Interner Serverfehler' });
     }
 });
@@ -29,7 +30,11 @@ router.post('/', async (req, res) => {
         const todo = await Todo.create({ title, description, completed });
         res.status(201).json(todo);
     } catch (err) {
-        res.status(400).json({ error: err.message });
+        if (err.name === 'ValidationError') {
+            return res.status(400).json({ error: err.message });
+        }
+        console.error(err);
+        res.status(500).json({ error: 'Interner Serverfehler' });
     }
 });
 
@@ -42,6 +47,7 @@ router.get('/:id', async (req, res) => {
         }
         res.json(todo);
     } catch (err) {
+        console.error(err);
         res.status(500).json({ error: 'Interner Serverfehler' });
     }
 });
@@ -58,7 +64,11 @@ router.put('/:id', async (req, res) => {
         }
         res.json(todo);
     } catch (err) {
-        res.status(400).json({ error: err.message });
+        if (err.name === 'ValidationError' || err.name === 'CastError') {
+            return res.status(400).json({ error: err.message });
+        }
+        console.error(err);
+        res.status(500).json({ error: 'Interner Serverfehler' });
     }
 });
 
@@ -71,6 +81,7 @@ router.delete('/:id', async (req, res) => {
         }
         res.status(204).send();
     } catch (err) {
+        console.error(err);
         res.status(500).json({ error: 'Interner Serverfehler' });
     }
 });
